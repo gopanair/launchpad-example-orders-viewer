@@ -1,0 +1,7 @@
+# Deliberately empty of dependencies.
+#
+# Its presence is what tells Launchpad the app is Python; the absence of flask,
+# fastapi or streamlit in it is what makes this the *generic* Python path —
+# started as `python app.py`, with the app owning its own server, bind address
+# and port. Reading SQLite needs nothing installed: sqlite3 is in the standard
+# library, and the database is a file on a mounted volume, not a service.
