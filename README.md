@@ -123,3 +123,18 @@ python -m unittest -v
 
 Twenty-one, no dependencies: which mount is chosen and why, and the promise
 that nothing from a query string reaches SQL as anything but a bound value.
+
+## The house style
+
+The look is the [Launchpad Example Kit](https://github.com/gopanair/launchpad-example-kit) —
+one stylesheet, one script, no CDN — served from `/static` out of a dict this app
+builds at startup. Reading a file per request would be a filesystem call on the
+hot path, and building the path from the URL would be a directory traversal
+waiting to happen.
+
+`STYLE` in `app.py` is what is left of this app's own CSS after the kit arrived:
+four rules for the sorted-column arrow, the null cell, the pager and the "where
+it looked" block. Everything else — the table, the buttons, the empty state, the
+cards — is kit vocabulary.
+
+MIT.

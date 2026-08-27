@@ -36,6 +36,19 @@ import storage
 
 BASE_PATH = os.getenv("BASE_PATH", "")
 TITLE = os.getenv("VIEWER_TITLE", "Orders")
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+# The house style, read once at startup rather than per request. Three files,
+# byte-identical in every example in the Launchpad gallery.
+STATIC = {}
+for _name, _type in (("launchpad-kit.css", "text/css; charset=utf-8"),
+                     ("launchpad-kit.js", "text/javascript; charset=utf-8"),
+                     ("favicon.svg", "image/svg+xml")):
+    try:
+        with open(os.path.join(HERE, "static", _name), "rb") as _f:
+            STATIC["/static/" + _name] = (_f.read(), _type)
+    except OSError:
+        pass
 DB_NAME = os.getenv("ORDERS_DB", "orders.db")
 TABLE = os.getenv("ORDERS_TABLE", "orders")
 STARTED_AT = datetime.now(timezone.utc)
@@ -124,10 +137,23 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         path = url.path.rstrip("/") or "/"
         params = {k: v[0] for k, v in parse_qs(url.query).items()}
+        # Static first, out of a dict built at startup: reading a file per
+        # request would be a filesystem call on the hot path, and building the
+        # path from the URL would be a directory traversal waiting to happen.
+        asset = STATIC.get(path)
+        if asset is not None:
+            self.send_response(200)
+            self.send_header("Content-Type", asset[1])
+            self.send_header("Content-Length", str(len(asset[0])))
+            self.send_header("Cache-Control", "public, max-age=300")
+            self.end_headers()
+            return self.wfile.write(asset[0])
+
         routes = {"/": self.page, "/orders.csv": self.csv, "/healthz": self.healthz}
         handler = routes.get(path)
         if handler is None:
-            return self.send_json(404, {"error": "no such path", "paths": sorted(routes)})
+            return self.send_json(
+                404, {"error": "no such path", "paths": sorted(list(routes) + list(STATIC))})
         handler(params)
 
     # --- routes --------------------------------------------------------------
@@ -206,48 +232,23 @@ class Handler(BaseHTTPRequestHandler):
 
 # --- rendering ---------------------------------------------------------------
 
+# The app's own layer on top of the house style. It adds nothing the kit
+# already has: the table, the buttons, the pager and the empty state are all
+# kit classes, and what is left is three rules for the sorted-column arrow and
+# the null cell.
 STYLE = """
-:root { color-scheme: light; }
-* { box-sizing: border-box; }
-body { margin:0; padding:2.5rem 1.5rem; background:#f7f8fa; color:#1c2024;
-       font:15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width:72rem; margin:0 auto; }
-h1 { font-size:1.35rem; letter-spacing:-0.015em; margin:0 0 .25rem; }
-p.sub { color:#6b7280; font-size:.82rem; margin:0 0 1.5rem; }
-p.sub code { font-family:ui-monospace, Menlo, monospace; font-size:.78rem; }
-form.filter { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin:0 0 .9rem; }
-input[type=search], select { font:inherit; font-size:.85rem; padding:.4rem .55rem; background:#fff;
-       border:1px solid #d5d7db; border-radius:7px; color:inherit; }
-input[type=search] { min-width:16rem; }
-button, a.btn { font:inherit; font-size:.85rem; padding:.4rem .8rem; border-radius:7px;
-       border:1px solid #d5d7db; background:#fff; color:#1c2024; cursor:pointer;
-       text-decoration:none; display:inline-block; }
-button.primary, a.btn.primary { background:#3538cd; border-color:#3538cd; color:#fff; }
-table { width:100%; border-collapse:collapse; background:#fff; border:1px solid #e5e7eb;
-        border-radius:10px; overflow:hidden; }
-th, td { text-align:left; padding:.5rem .8rem; border-bottom:1px solid #f0f1f3; font-size:.85rem;
-        white-space:nowrap; }
-th { font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:#6b7280; background:#fbfbfc; }
-th a { color:inherit; text-decoration:none; display:block; }
-th a:hover { color:#3538cd; }
-th .arrow { color:#3538cd; }
-tbody tr:last-child td { border-bottom:none; }
-tbody tr:hover td { background:#fbfbfd; }
-td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
-td.null { color:#c0c4cc; }
-.scroll { overflow-x:auto; }
-.pager { display:flex; gap:.5rem; align-items:center; margin:.9rem 0 0; color:#6b7280; font-size:.8rem; }
-.pager .spacer { flex:1; }
-.empty { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:2rem 1.5rem;
-         text-align:center; color:#6b7280; font-size:.9rem; }
-.notice { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:1.75rem; max-width:44rem; }
-.notice h2 { font-size:1rem; margin:0 0 .5rem; color:#1c2024; }
-.notice p { margin:0 0 .75rem; color:#4b5563; font-size:.88rem; }
-.notice .where { font-family:ui-monospace, Menlo, monospace; font-size:.78rem; color:#6b7280;
-         background:#f7f8fa; border:1px solid #eceef1; border-radius:6px; padding:.45rem .6rem;
-         margin:0 0 1rem; overflow-wrap:anywhere; }
-footer { margin-top:1.25rem; color:#98a2b3; font-size:.78rem; }
-footer a, a { color:#3538cd; }
+.arrow { color: var(--lp-primary); }
+th a { color: inherit; text-decoration: none; display: block; }
+th a:hover { color: var(--lp-primary); }
+td.null { color: var(--lp-ink-3); }
+.tbl th, .tbl td { white-space: nowrap; }
+.pager { display: flex; gap: .5rem; align-items: center; margin-top: .875rem;
+         color: var(--lp-ink-2); font-size: .8125rem; }
+.pager .spacer { flex: 1; }
+.where { font-family: var(--lp-mono); font-size: .8125rem; color: var(--lp-ink-2);
+         background: var(--lp-sunk); border: 1px solid var(--lp-rule);
+         border-radius: var(--lp-r-sm); padding: .45rem .6rem; margin: 0 0 1rem;
+         overflow-wrap: anywhere; }
 """
 
 
@@ -264,16 +265,81 @@ def link(view, path="/", **overrides):
     return html.escape(BASE_PATH + path + ("?" + query if query else ""))
 
 
-def shell(body, subtitle):
+def cap(label, on, note=""):
+    return '<span class="cap {state}" title="{note}"><b>{label}</b></span>'.format(
+        state="on" if on else "off", note=html.escape(note), label=html.escape(label))
+
+
+def rail(state):
+    """What this example demonstrates, and whether it is really here.
+
+    Read from `LAUNCHPAD_STORAGE`, which is the platform's own declaration of
+    what an administrator mounted. Nothing here guesses at a path.
+    """
+    mounts, declaration_error = storage.declared_mounts()
+    writable = [m for m in mounts if m.access != storage.ACCESS_READ]
+    return "".join([
+        cap("Generic Python", True, "No framework the platform recognises; started as `python app.py`."),
+        cap("App storage", bool(mounts) and not declaration_error,
+            declaration_error or
+            ("%d mount%s declared in LAUNCHPAD_STORAGE."
+             % (len(mounts), "" if len(mounts) == 1 else "s") if mounts else
+             "Nothing is mounted. An administrator attaches storage on this app's "
+             "Storage tab; a grant is a person's and a mapping is an app's.")),
+        cap("Read-only", True,
+            "This app opens the database with mode=ro and writes nothing, ever — "
+            "even where the mount would let it."),
+        cap("The file", bool(state and state.get("ready")),
+            (state or {}).get("db_path") or "Not there yet, which is the normal state on a fresh volume."),
+        cap("Writable mount", bool(writable),
+            "%s is writable — this app still does not write to it." % writable[0].name
+            if writable else "Every mount is read-only, which is what this app wants."),
+        cap("Launchpad workload", bool(os.getenv("LAUNCHPAD_APP_SLUG")),
+            "Running as a Launchpad workload." if os.getenv("LAUNCHPAD_APP_SLUG")
+            else "This is a local run."),
+    ])
+
+
+def shell(body, subtitle, state=None):
     return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title><style>{style}</style></head>
-<body><main>
-  <h1>{title}</h1>
-  <p class="sub">{subtitle}</p>
-  {body}
-</main></body></html>""".format(title=html.escape(TITLE), style=STYLE, subtitle=subtitle, body=body)
+<title>{title}</title>
+<meta name="description" content="A SQLite database on an attached volume, read.">
+<link rel="icon" href="{base}/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{base}/static/launchpad-kit.css">
+<style>{style}</style></head>
+<body>
+<a class="lp-skip" href="#main">Skip to content</a>
+
+<header class="masthead"><div class="masthead-in">
+<div>
+<div class="wordmark"><span class="mark" aria-hidden="true"></span>
+<span class="wordmark-text">Launchpad example</span></div>
+<h1>{title}</h1>
+<p class="standfirst">{subtitle}</p>
+</div>
+<div class="masthead-aside">
+<span class="chip chip-lang">Python &middot; standard library</span>
+<span class="chip">Read-only</span>
+</div>
+</div></header>
+
+<div class="rail"><div class="rail-in">
+<span class="rail-label">Launchpad</span>{rail}
+</div></div>
+
+<main class="shell" id="main">{body}</main>
+
+<footer class="foot"><div class="foot-in">
+<span>An example app from the <strong>Launchpad</strong> gallery.</span>
+<span>Python &middot; http.server &middot; sqlite3 &middot; no dependencies</span>
+</div></footer>
+
+<script src="{base}/static/launchpad-kit.js"></script>
+</body></html>""".format(
+        title=html.escape(TITLE), style=STYLE, subtitle=subtitle, body=body,
+        base=html.escape(BASE_PATH), rail=rail(state))
 
 
 def render_problem(problem):
@@ -284,19 +350,40 @@ def render_problem(problem):
     re-stats the volume.
     """
     where = ('<p class="where">%s</p>' % html.escape(problem.where)) if problem.where else ""
-    hint = ("<p>%s</p>" % html.escape(problem.hint)) if problem.hint else ""
+    hint = ('<p class="muted">%s</p>' % html.escape(problem.hint)) if problem.hint else ""
     return shell(
-        """<div class="notice">
-             <h2>{problem}</h2>
-             {where}{hint}
-             <p><a class="btn primary" href="{retry}">Check again</a></p>
+        """<div class="card" style="max-width:46rem">
+             <div class="card-hd"><h2>{problem}</h2>
+               <span class="badge tone-att">not there yet</span></div>
+             <div class="card-bd">
+               {where}{hint}
+               <div class="note">
+                 <strong>This is a page, not an error.</strong> On a volume somebody else
+                 fills, an absent file is the normal state for a while &mdash; so the app
+                 says which volume it looked at, where it looked, and what would have to
+                 happen. Nothing is cached between requests, so the button below is a real
+                 check rather than a reload of a decision made at boot.
+               </div>
+               <div class="btns">
+                 <a class="btn btn-primary" href="{retry}">Check again</a>
+                 <a class="btn" href="{health}">What the health check says</a>
+               </div>
+             </div>
+             <div class="card-ft">
+               Liveness is the process, not the data: a missing database is
+               <code>200</code> with <code>database: false</code>, because reporting it as
+               unhealthy would have the platform restart something that is working exactly
+               as intended.
+             </div>
            </div>""".format(
             problem=html.escape(problem.problem),
             where=where,
             hint=hint,
             retry=html.escape(BASE_PATH + "/"),
+            health=html.escape(BASE_PATH + "/healthz"),
         ),
         "Looking for <code>%s</code> on the first attached volume." % html.escape(DB_NAME),
+        state=storage.resolve_db(DB_NAME, None),
     )
 
 
@@ -308,13 +395,24 @@ def render_table(data):
             html.escape(c["name"]), " selected" if view["col"] == c["name"] else "", html.escape(c["name"]))
         for c in cols
     )
-    filter_form = """<form class="filter" method="get" action="{action}">
-        <input type="search" name="q" value="{q}" placeholder="Filter {table}…" aria-label="Filter">
-        <select name="col" aria-label="Column"><option value="">All columns</option>{options}</select>
-        <input type="hidden" name="sort" value="{sort}"><input type="hidden" name="dir" value="{dir}">
-        <button class="primary" type="submit">Filter</button>
-        {clear}
-      </form>""".format(
+    filter_form = """<div class="card" style="margin-bottom:1rem"><div class="card-bd">
+        <form class="controls" method="get" action="{action}">
+          <div class="field field-wide">
+            <label for="q">Filter</label>
+            <input class="input" type="search" id="q" name="q" value="{q}"
+                   placeholder="Anything in {table}…">
+          </div>
+          <div class="field">
+            <label for="col">Column</label>
+            <select id="col" name="col"><option value="">All columns</option>{options}</select>
+          </div>
+          <input type="hidden" name="sort" value="{sort}"><input type="hidden" name="dir" value="{dir}">
+          <div class="btns">
+            <button class="btn btn-primary" type="submit">Filter</button>
+            {clear}
+          </div>
+        </form>
+      </div></div>""".format(
         action=html.escape(BASE_PATH + "/"),
         q=html.escape(view["q"]),
         table=html.escape(TABLE),
@@ -352,19 +450,25 @@ def render_table(data):
         body += "<tr>%s</tr>" % cells
 
     if rows:
-        table = '<div class="scroll"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (
-            headers, body)
+        table = ('<div class="card"><div class="card-bd" style="padding:0">'
+                 '<div class="tbl-wrap"><table class="tbl"><thead><tr>%s</tr></thead>'
+                 "<tbody>%s</tbody></table></div></div></div>") % (headers, body)
     elif view["q"]:
-        table = '<div class="empty">No row matches “%s”.</div>' % html.escape(view["q"])
+        table = ('<div class="empty"><h3>No row matches &ldquo;%s&rdquo;</h3>'
+                 "<p>Clear the filter, or try another column.</p></div>"
+                 ) % html.escape(view["q"])
     else:
-        table = '<div class="empty">The table %s is empty.</div>' % html.escape(TABLE)
+        table = ('<div class="empty"><h3>The table %s is empty</h3>'
+                 "<p>The file is there and the table has no rows in it &mdash; which is a "
+                 "different thing from the file not being there, and the app says which.</p>"
+                 "</div>") % html.escape(TABLE)
 
     first = data["offset"] + 1 if data["total"] else 0
     last = min(data["offset"] + data["size"], data["total"])
-    prev = ('<a class="btn" href="%s">Previous</a>' % link(view, offset=max(0, data["offset"] - data["size"]))
-            ) if data["offset"] > 0 else ""
-    nxt = ('<a class="btn" href="%s">Next</a>' % link(view, offset=data["offset"] + data["size"])
-           ) if last < data["total"] else ""
+    prev = ('<a class="btn btn-sm" href="%s">&larr; Previous</a>' % link(
+        view, offset=max(0, data["offset"] - data["size"]))) if data["offset"] > 0 else ""
+    nxt = ('<a class="btn btn-sm" href="%s">Next &rarr;</a>' % link(
+        view, offset=data["offset"] + data["size"])) if last < data["total"] else ""
     pager = """<div class="pager">{prev}{next}<span class="spacer"></span>
         <span>Showing {first}–{last} of {total}{filtered}</span></div>""".format(
         prev=prev, next=nxt, first=first, last=last, total=data["total"],
@@ -372,14 +476,34 @@ def render_table(data):
     )
 
     return shell(
-        filter_form + table + pager + """<footer>Read-only from <code>{where}</code> ·
-          <a href="{csv}">Download this view as CSV</a> · liveness at <code>{base}/healthz</code></footer>""".format(
+        filter_form + table + pager + """<div class="card" style="margin-top:1.5rem">
+          <div class="card-hd"><h2>Where this came from</h2></div>
+          <div class="card-bd">
+            <dl class="kv">
+              <dt>Read from</dt><dd class="mono small">{where}</dd>
+              <dt>Opened</dt><dd><code>mode=ro</code> &mdash; this app never writes, even
+                where the mount would let it</dd>
+              <dt>This view</dt><dd><a href="{csv}">Download as CSV</a> &mdash; the whole
+                result, not the page you are looking at</dd>
+              <dt>Liveness</dt><dd><a href="{base}/healthz"><code>{base}/healthz</code></a></dd>
+            </dl>
+            <div class="note tone-brand">
+              <strong>Nothing here guesses at a path.</strong> The volume comes from
+              <code>LAUNCHPAD_STORAGE</code>, which is the platform's own declaration of
+              what an administrator mounted. A grant is a person's and a mapping is an
+              app's, and neither implies the other &mdash; so an app that hardcoded
+              <code>/mnt/data</code> would work on one install and fail on the next.
+            </div>
+          </div>
+        </div>""".format(
             where=html.escape(data["where"]),
             csv=link(view, path="/orders.csv", offset=""),
             base=html.escape(BASE_PATH),
         ),
-        "%s row%s in <code>%s</code>, read from the volume — this app never writes." % (
-            data["total"], "" if data["total"] == 1 else "s", html.escape(TABLE)),
+        "%s row%s in <code>%s</code>, read from a volume somebody else fills. "
+        "This app opens the database read-only and writes nothing, ever." % (
+            "{:,}".format(data["total"]), "" if data["total"] == 1 else "s", html.escape(TABLE)),
+        state=data["state"],
     )
 
 
